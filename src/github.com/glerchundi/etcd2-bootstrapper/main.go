@@ -144,6 +144,9 @@ func writeEnvironment(me member, members []member, force bool, w io.Writer) erro
 		// detect and remove bad peers
 		//
 
+		// detect if it's required to add or not
+		isAddRequired := true
+
 		// create a reverse cluster members map
 		clusterMembersByIp := make(map[string]string)
 		for _, member := range members {
@@ -159,6 +162,10 @@ func writeEnvironment(me member, members []member, force bool, w io.Writer) erro
 			peerHost, _, err := net.SplitHostPort(peerURL.Host)
 			if err != nil {
 				return err
+			}
+
+			if peerHost == me.Address {
+				isAddRequired = false
 			}
 
 			_, ok := clusterMembersByIp[peerHost]
@@ -200,14 +207,15 @@ func writeEnvironment(me member, members []member, force bool, w io.Writer) erro
 		// join an existing cluster
 		//
 
-		instancePeerURL := util.EtcdPeerURLFromIP(me.Address)
-		log.Printf("adding etcd member: %s...", instancePeerURL)
-		member, err := util.EtcdAddMember(goodEtcdClientURL, instancePeerURL)
-		if member == nil {
-			return err
+		if isAddRequired {
+			instancePeerURL := util.EtcdPeerURLFromIP(me.Address)
+			log.Printf("adding etcd member: %s...", instancePeerURL)
+			member, err := util.EtcdAddMember(goodEtcdClientURL, instancePeerURL)
+			if member == nil {
+				return err
+			}
+			log.Printf("done\n")
 		}
-
-		log.Printf("done\n")
 	} else {
 		log.Printf("creating new cluster\n")
 

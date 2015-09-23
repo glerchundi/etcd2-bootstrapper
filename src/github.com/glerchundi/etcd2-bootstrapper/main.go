@@ -161,7 +161,10 @@ func writeEnvironment(me member, members []member, force bool, w io.Writer) erro
 				return err
 			}
 
-			if _, ok := clusterMembersByIp[peerHost]; !ok {
+			_, ok := clusterMembersByIp[peerHost]
+			isRemoveRequired := !ok || (force && etcdMember.Name == me.Name)
+
+			if isRemoveRequired {
 				log.Printf("removing etcd member: %s...", etcdMember.ID)
 				err = util.EtcdRemoveMember(goodEtcdClientURL, etcdMember.ID)
 				if err != nil {
@@ -197,21 +200,11 @@ func writeEnvironment(me member, members []member, force bool, w io.Writer) erro
 		// join an existing cluster
 		//
 
-		isAddRequired := true
-		for _, etcdMember := range etcdMembers {
-			if etcdMember.Name == me.Name {
-				isAddRequired = false
-				break
-			}
-		}
-
-		if isAddRequired {
-			instancePeerURL := util.EtcdPeerURLFromIP(me.Address)
-			log.Printf("adding etcd member: %s...", instancePeerURL)
-			member, err := util.EtcdAddMember(goodEtcdClientURL, instancePeerURL)
-			if member == nil {
-				return err
-			}
+		instancePeerURL := util.EtcdPeerURLFromIP(me.Address)
+		log.Printf("adding etcd member: %s...", instancePeerURL)
+		member, err := util.EtcdAddMember(goodEtcdClientURL, instancePeerURL)
+		if member == nil {
+			return err
 		}
 
 		log.Printf("done\n")

@@ -27,11 +27,16 @@ func main() {
 		cli.StringFlag{
 			Name: "members",
 		},
+		cli.BoolFlag{
+			Name: "force, f",
+		},
 		cli.StringFlag{
 			Name: "out, o",
 			Value: "/etc/sysconfig/etcd-peers",
 			Usage: "etcd peers environment file destination",
 		},
+
+
 	}
 	app.Action = handleMain
 	app.RunAndExitOnError()
@@ -41,6 +46,7 @@ func handleMain(c *cli.Context) {
 	// get in parameters
 	me := c.GlobalString("me")
 	members := c.GlobalString("members")
+	force := c.GlobalBool("force")
 	environmentFilePath := c.GlobalString("out")
 
 	// sanity checks
@@ -76,7 +82,7 @@ func handleMain(c *cli.Context) {
 	isClosed := false
 	defer func() { if !isClosed { tempFile.Close() } }()
 
-	if err := writeEnvironment(*meMember, clusterMembers, tempFile); err != nil {
+	if err := writeEnvironment(*meMember, clusterMembers, force, tempFile); err != nil {
 		log.Fatal(err)
 	}
 
@@ -93,7 +99,7 @@ func handleMain(c *cli.Context) {
 	return
 }
 
-func writeEnvironment(me member, members []member, w io.Writer) error {
+func writeEnvironment(me member, members []member, force bool, w io.Writer) error {
 	var buffer bytes.Buffer
 	var err error
 
@@ -101,6 +107,7 @@ func writeEnvironment(me member, members []member, w io.Writer) error {
 	var etcdMembers []client.Member
 	var goodEtcdClientURL string = ""
 	for _, member := range members {
+		// what was first, chicken or egg?
 		if member.Address == me.Address {
 			continue
 		}
@@ -126,8 +133,11 @@ func writeEnvironment(me member, members []member, w io.Writer) error {
 		}
 	}
 
+	// cosmetic parameter which defines if it should join to an existing or create a new cluster
+	joinExistingCluster := etcdMembers != nil && (!isMember || force)
+
 	// if i am not already listed as a member of the cluster assume that this is a new cluster
-	if etcdMembers != nil && !isMember {
+	if joinExistingCluster {
 		log.Printf("joining to an existing cluster, using this client url: %s\n", goodEtcdClientURL)
 
 		//

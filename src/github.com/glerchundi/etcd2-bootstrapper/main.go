@@ -9,9 +9,11 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"text/template"
 
 	"github.com/codegangsta/cli"
 	"github.com/coreos/etcd/client"
+	"github.com/glerchundi/etcd2-bootstrapper/etcd"
 	"github.com/glerchundi/etcd2-bootstrapper/util"
 )
 
@@ -27,6 +29,24 @@ func main() {
 		cli.StringFlag{
 			Name: "members",
 		},
+		cli.StringFlag{
+			Name: "tmpl-listen-url",
+		},
+		cli.StringFlag{
+			Name: "tmpl-peer-url",
+		},
+		cli.StringFlag{
+			Name: "cert-file",
+			Usage: "identify HTTPS client using this SSL certificate file",
+		},
+		cli.StringFlag{
+			Name: "key-file",
+			Usage: "identify HTTPS client using this SSL key file",
+		},
+		cli.StringFlag{
+			Name: "ca-file",
+			Usage: "verify certificates of HTTPS-enabled servers using this CA bundle",
+		},
 		cli.BoolFlag{
 			Name: "force, f",
 		},
@@ -35,8 +55,6 @@ func main() {
 			Value: "/etc/sysconfig/etcd-peers",
 			Usage: "etcd peers environment file destination",
 		},
-
-
 	}
 	app.Action = handleMain
 	app.RunAndExitOnError()
@@ -46,7 +64,12 @@ func handleMain(c *cli.Context) {
 	// get in parameters
 	me := c.GlobalString("me")
 	members := c.GlobalString("members")
+	tmplListenUrl := c.GlobalString("tmpl-listen-url")
+	tmplPeerUrl := c.GlobalString("tmpl-peer-url")
 	force := c.GlobalBool("force")
+	certFile := c.GlobalString("cert-file")
+	keyFile := c.GlobalString("key-file")
+	caCertFile := c.GlobalString("ca-file")
 	environmentFilePath := c.GlobalString("out")
 
 	// sanity checks
@@ -68,9 +91,37 @@ func handleMain(c *cli.Context) {
 		log.Fatal(err)
 	}
 
+	var tmplListen *template.Template = nil
+	if tmplListenUrl != "" {
+		tmplListen, _ = template.New("tmpl-listen-url").Parse(tmplListenUrl)
+	}
+
+	var tmplPeer *template.Template = nil
+	if tmplPeerUrl != "" {
+		tmplPeer, _ = template.New("tmpl-listen-url").Parse(tmplPeerUrl)
+	}
+
 	if _, err := os.Stat(environmentFilePath); err == nil {
 		log.Printf("etcd-peers file %s already created, exiting.\n", environmentFilePath)
 		return
+	}
+
+	// create client instantiator
+
+	var newClientFn func(string)(*etcd.Client,error) = nil
+	if certFile != "" && keyFile != "" && caCertFile != "" {
+		newClientFn = func(url string)(*etcd.Client,error) {
+			return etcd.NewTLSClient(url, certFile, keyFile, caCertFile)
+		}
+	} else {
+		newClientFn = func(url string)(*etcd.Client,error) {
+			return etcd.NewClient(url)
+		}
+	}
+
+	kvs, err := syncEtcdCluster(*meMember, clusterMembers, force, tmplListen, tmplPeer, newClientFn)
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	tempFilePath := environmentFilePath + ".tmp"
@@ -82,7 +133,7 @@ func handleMain(c *cli.Context) {
 	isClosed := false
 	defer func() { if !isClosed { tempFile.Close() } }()
 
-	if err := writeEnvironment(*meMember, clusterMembers, force, tempFile); err != nil {
+	if err := writeEnvironmentFile(kvs, tempFile); err != nil {
 		log.Fatal(err)
 	}
 
@@ -99,10 +150,9 @@ func handleMain(c *cli.Context) {
 	return
 }
 
-func writeEnvironment(me member, members []member, force bool, w io.Writer) error {
-	var buffer bytes.Buffer
-	var err error
-
+func syncEtcdCluster(me member, members []member, force bool,
+                     tmplListenUrl, tmplPeerUrl *template.Template,
+                     newClientFn func(string)(*etcd.Client,error)) (map[string]string, error) {
 	// retrieve current cluster members
 	var etcdMembers []client.Member
 	var goodEtcdClientURL string = ""
@@ -112,9 +162,22 @@ func writeEnvironment(me member, members []member, force bool, w io.Writer) erro
 			continue
 		}
 
-		etcdClientURL := util.EtcdClientURLFromIP(member.Address)
-		etcdMembers, err = util.EtcdListMembers(etcdClientURL)
-		if err == nil {
+		etcdClientURL, err := getListenURL(member.Address, tmplListenUrl)
+		if err != nil {
+			return nil, err
+		}
+
+		etcdClient, err := newClientFn(etcdClientURL)
+		if err != nil {
+			log.Printf("unable to create etcd client for %s: %v\n", etcdClientURL, err)
+			continue
+		}
+
+		etcdMembers, err = etcdClient.ListMembers()
+		if err != nil {
+			log.Printf("unable to list etcd members: %v\n", err)
+			continue
+		} else {
 			goodEtcdClientURL = etcdClientURL
 			break
 		}
@@ -156,12 +219,12 @@ func writeEnvironment(me member, members []member, force bool, w io.Writer) erro
 		for _, etcdMember := range etcdMembers {
 			peerURL, err := url.Parse(etcdMember.PeerURLs[0])
 			if err != nil {
-				return err
+				return nil, err
 			}
 
 			peerHost, _, err := net.SplitHostPort(peerURL.Host)
 			if err != nil {
-				return err
+				return nil, err
 			}
 
 			if peerHost == me.Address {
@@ -173,10 +236,17 @@ func writeEnvironment(me member, members []member, force bool, w io.Writer) erro
 
 			if isRemoveRequired {
 				log.Printf("removing etcd member: %s...", etcdMember.ID)
-				err = util.EtcdRemoveMember(goodEtcdClientURL, etcdMember.ID)
+
+				etcdClient, err := newClientFn(goodEtcdClientURL)
 				if err != nil {
-					return err
+					return nil, err
 				}
+
+				err = etcdClient.RemoveMember(etcdMember.ID)
+				if err != nil {
+					return nil, err
+				}
+
 				log.Printf("done\n")
 			}
 		}
@@ -185,9 +255,14 @@ func writeEnvironment(me member, members []member, force bool, w io.Writer) erro
 		// list current etcd members (after removing spurious ones)
 		//
 
-		etcdMembers, err = util.EtcdListMembers(goodEtcdClientURL)
+		etcdClient, err := newClientFn(goodEtcdClientURL)
 		if err != nil {
-			return err
+			return nil, err
+		}
+
+		etcdMembers, err = etcdClient.ListMembers()
+		if err != nil {
+			return nil, err
 		}
 
 		kvs := make([]string, 0)
@@ -198,7 +273,11 @@ func writeEnvironment(me member, members []member, force bool, w io.Writer) erro
 			}
 			kvs = append(kvs, fmt.Sprintf("%s=%s", etcdMember.Name, etcdMember.PeerURLs[0]))
 		}
-		kvs = append(kvs, fmt.Sprintf("%s=%s", me.Name, util.EtcdPeerURLFromIP(me.Address)))
+		instancePeerURL, err := getPeerURL(me.Address, tmplPeerUrl)
+		if err != nil {
+			return nil, err
+		}
+		kvs = append(kvs, fmt.Sprintf("%s=%s", me.Name, instancePeerURL))
 
 		initialClusterState = "existing"
 		initialCluster = strings.Join(kvs, ",")
@@ -208,11 +287,16 @@ func writeEnvironment(me member, members []member, force bool, w io.Writer) erro
 		//
 
 		if isAddRequired {
-			instancePeerURL := util.EtcdPeerURLFromIP(me.Address)
 			log.Printf("adding etcd member: %s...", instancePeerURL)
-			member, err := util.EtcdAddMember(goodEtcdClientURL, instancePeerURL)
+
+			etcdClient, err := newClientFn(goodEtcdClientURL)
+			if err != nil {
+				return nil, err
+			}
+
+			member, err := etcdClient.AddMember(instancePeerURL)
 			if member == nil {
-				return err
+				return nil, err
 			}
 			log.Printf("done\n")
 		}
@@ -222,20 +306,34 @@ func writeEnvironment(me member, members []member, force bool, w io.Writer) erro
 		// initial cluster
 		kvs := make([]string, 0)
 		for _, member := range members {
-			kvs = append(kvs, fmt.Sprintf("%s=%s", member.Name, util.EtcdPeerURLFromIP(member.Address)))
+			peerURL, err := getPeerURL(member.Address, tmplPeerUrl)
+			if err != nil {
+				return nil, err
+			}
+			kvs = append(kvs, fmt.Sprintf("%s=%s", member.Name, peerURL))
 		}
 
 		initialClusterState = "new"
 		initialCluster = strings.Join(kvs, ",")
 	}
 
+	kvs := map[string]string{}
+	kvs["ETCD_NAME"] = me.Name
+	kvs["ETCD_INITIAL_CLUSTER_STATE"] = initialClusterState
+	kvs["ETCD_INITIAL_CLUSTER"] = initialCluster
+
+	return kvs, nil
+}
+
+func writeEnvironmentFile(kvs map[string]string, w io.Writer) error {
+	var buffer bytes.Buffer
+
 	// indicate it's going to write envvars
 	log.Printf("writing environment variables...")
 
-	// create environment variables
-	buffer.WriteString(fmt.Sprintf("ETCD_NAME=%s\n", me.Name))
-	buffer.WriteString(fmt.Sprintf("ETCD_INITIAL_CLUSTER_STATE=%s\n", initialClusterState))
-	buffer.WriteString(fmt.Sprintf("ETCD_INITIAL_CLUSTER=%s\n", initialCluster))
+	for k, v := range kvs {
+		buffer.WriteString(fmt.Sprintf("%s=%s\n", k, v))
+	}
 
 	if _, err := buffer.WriteTo(w); err != nil {
 		return err
@@ -271,4 +369,28 @@ func parseMembers(value string) ([]member, error) {
 		list = append(list, *m)
 	}
 	return list, nil
+}
+
+func getPeerURL(hostname string, tmpl *template.Template) (string, error) {
+	if tmpl != nil {
+		return executeTemplate(tmpl, hostname)
+	} else {
+		return util.EtcdPeerURLFromIP(hostname), nil
+	}
+}
+
+func getListenURL(hostname string, tmpl *template.Template) (string, error) {
+	if tmpl != nil {
+		return executeTemplate(tmpl, hostname)
+	} else {
+		return util.EtcdClientURLFromIP(hostname), nil
+	}
+}
+
+func executeTemplate(tmpl *template.Template, data interface{}) (string, error) {
+	var cmdBuffer bytes.Buffer
+	if err := tmpl.Execute(&cmdBuffer, data); err != nil {
+		return "", err
+	}
+	return cmdBuffer.String(), nil
 }

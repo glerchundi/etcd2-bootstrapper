@@ -1,7 +1,12 @@
 package pkg
 
 import (
+	"bytes"
 	"fmt"
+	"io"
+	"net"
+	"net/url"
+	"strings"
 	"text/template"
 	"os"
 
@@ -9,11 +14,6 @@ import (
 	"github.com/coreos/etcd/client"
 	"github.com/glerchundi/etcd2-bootstrapper/pkg/etcd"
 	"github.com/glerchundi/etcd2-bootstrapper/pkg/util"
-"net/url"
-	"net"
-	"strings"
-	"bytes"
-	"io"
 )
 
 type Config struct {

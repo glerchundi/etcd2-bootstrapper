@@ -1,21 +1,22 @@
 language: go
 go:
-  - 1.4
+  - 1.5
   - tip
-install:
-  - go get github.com/constabulary/gb/...
 script:
-  - gb build all
-  - bash -e build-static
+  - make static
+# Travis CI fails to deploy to GiHub : mime-types-data requires Ruby version >= 2.0
+# http://stackoverflow.com/questions/33855550/travis-ci-fails-to-deploy-to-gihub-mime-types-data-requires-ruby-version-2
+before_deploy:
+  - gem install mime-types -v 2.6.2
 deploy:
   provider: releases
   skip_cleanup: true
   api_key:
-    secure: "jOESlaHuSuA5o9zhgq4g4oTrUCNhMdWWv5WoNVqDd4Ke5El/maVK8KhluGRldkCGQ1/A7erzgXDf9p9OrWWlWNTJApCx9WU/7Ywsu7AHrdB06FrpmKQrgb0xlWGze084NgsLHlXK6TTBhhrHGQ1aFL+4l9BScDg9GcBkd3wxBgl2q4AAEOmlURLgRLBJlf5H+QqvlIMe/AsKt5+9EYvnU/mlIOBkfzsBAA85mRlkAo3MZSCCG3qrbrC56bMAnRWP7x0+PaMX6QyX9k/qEFENtcgObK7teVYaQWf/sEYkLNzNBKe3Jr8jhPAuFQP0zV/aP8Akku/NIz76cylROfh+w36ZqNOec+2YHqrjQvm8qR5vJTpQvdOlfmSui/xiXXORl8zgD8UZ2E/BwT+cvnW1IX7/B56r58lWjDzt3NKcFKAJxO6PiTjXLhjN6MFOyK4OIcN8oy0SYcLlM1qRbH66UUCN6u0TaWIOWNReJNsQ7/ZNlvDgajBjK6L7IT9pSg8gE9dagUSYeB16sSoX8dMPERkK2YMKGy/OCchSyAorBOiZb67sCXZK2bHQOmjJR1VeFygxFb3l9RrGJ6wlT8Bdxj8XGg06W1vm1NE7pzypxA4y1oYO3hmUEICxiX4T3f4nxBj1bXxwR3m3qGiiPSGzhOZ4Q40dWlmGpDu5eVTCvwY="
+      secure: "jOESlaHuSuA5o9zhgq4g4oTrUCNhMdWWv5WoNVqDd4Ke5El/maVK8KhluGRldkCGQ1/A7erzgXDf9p9OrWWlWNTJApCx9WU/7Ywsu7AHrdB06FrpmKQrgb0xlWGze084NgsLHlXK6TTBhhrHGQ1aFL+4l9BScDg9GcBkd3wxBgl2q4AAEOmlURLgRLBJlf5H+QqvlIMe/AsKt5+9EYvnU/mlIOBkfzsBAA85mRlkAo3MZSCCG3qrbrC56bMAnRWP7x0+PaMX6QyX9k/qEFENtcgObK7teVYaQWf/sEYkLNzNBKe3Jr8jhPAuFQP0zV/aP8Akku/NIz76cylROfh+w36ZqNOec+2YHqrjQvm8qR5vJTpQvdOlfmSui/xiXXORl8zgD8UZ2E/BwT+cvnW1IX7/B56r58lWjDzt3NKcFKAJxO6PiTjXLhjN6MFOyK4OIcN8oy0SYcLlM1qRbH66UUCN6u0TaWIOWNReJNsQ7/ZNlvDgajBjK6L7IT9pSg8gE9dagUSYeB16sSoX8dMPERkK2YMKGy/OCchSyAorBOiZb67sCXZK2bHQOmjJR1VeFygxFb3l9RrGJ6wlT8Bdxj8XGg06W1vm1NE7pzypxA4y1oYO3hmUEICxiX4T3f4nxBj1bXxwR3m3qGiiPSGzhOZ4Q40dWlmGpDu5eVTCvwY="
   file:
     - ${TRAVIS_BUILD_DIR}/bin/etcd2-bootstrapper-linux-amd64
   on:
     repo: glerchundi/etcd2-bootstrapper
     branch: master
     tags: true
-    go: 1.4
+    go: 1.5

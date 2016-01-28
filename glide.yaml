@@ -1,0 +1,6 @@
+package: github.com/glerchundi/etcd2-bootstrapper
+import:
+- package: github.com/coreos/etcd
+  subpackages:
+  - /client
+- package: github.com/glerchundi/logrus
